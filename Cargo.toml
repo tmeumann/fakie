@@ -1,0 +1,14 @@
+[package]
+name = "messagebank"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+async-trait = "0.1"
+dashmap = "6"
+hickory-resolver = "0.25"
+pingora = { version = "0.4", features = ["lb", "rustls"] }
+
+[patch.crates-io]
+# TODO temporary fix for https://github.com/cloudflare/pingora/issues/568
+sfv = { git = "https://github.com/undef1nd/sfv.git", tag = "v0.9.4" }
