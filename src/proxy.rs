@@ -5,11 +5,51 @@ use pingora::lb::LoadBalancer;
 use pingora::prelude::{HttpPeer, ProxyHttp, RoundRobin, Session};
 use pingora::protocols::l4::socket::SocketAddr as PingoraSocketAddr;
 use pingora::ErrorType;
+use std::fmt::Display;
 use std::hash::{BuildHasher, Hash, Hasher, RandomState};
+use std::io::Write;
 use std::net::SocketAddr;
 use std::sync::Arc;
+use termcolor::{Buffer, BufferWriter, Color, ColorSpec, WriteColor};
 
 type RequestHash = u64;
+
+pub enum ProxyOutcome {
+    RequestDropped,
+    ResponseDropped,
+    Forwarded,
+}
+
+impl ProxyOutcome {
+    pub fn get_colour(&self) -> ColorSpec {
+        let mut colour_spec = ColorSpec::new();
+
+        let foreground = match self {
+            ProxyOutcome::RequestDropped => Color::Red,
+            ProxyOutcome::ResponseDropped => Color::Yellow,
+            ProxyOutcome::Forwarded => Color::Green,
+        };
+
+        colour_spec.set_fg(Some(foreground));
+
+        colour_spec
+    }
+}
+
+impl Display for ProxyOutcome {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ProxyOutcome::RequestDropped => write!(f, "REQUEST DROPPED"),
+            ProxyOutcome::ResponseDropped => write!(f, "RESPONSE DROPPED"),
+            ProxyOutcome::Forwarded => write!(f, "FORWARDED"),
+        }
+    }
+}
+
+pub struct RequestContext {
+    hash: Option<RequestHash>,
+    log_buffer: Buffer,
+}
 
 pub struct FlakyProxy {
     sni: String,
@@ -17,16 +57,22 @@ pub struct FlakyProxy {
     hash_state: RandomState,
     request_counters: DashMap<RequestHash, u64>,
     response_counters: DashMap<RequestHash, u64>,
+    log_writer: BufferWriter,
 }
 
 impl FlakyProxy {
-    pub fn new(sni: String, load_balancer: Arc<LoadBalancer<RoundRobin>>) -> Self {
+    pub fn new(
+        sni: String,
+        load_balancer: Arc<LoadBalancer<RoundRobin>>,
+        log_writer: BufferWriter,
+    ) -> Self {
         Self {
             sni,
             load_balancer,
             hash_state: RandomState::new(),
             request_counters: DashMap::new(),
             response_counters: DashMap::new(),
+            log_writer,
         }
     }
 
@@ -37,48 +83,54 @@ impl FlakyProxy {
 
         request_header.method.hash(&mut hasher);
         request_header.uri.hash(&mut hasher);
-        request_header.version.hash(&mut hasher);
 
-        session
+        let client_ip = session
             .client_addr()
             .and_then(PingoraSocketAddr::as_inet)
-            .map(SocketAddr::ip)
-            .hash(&mut hasher);
+            .map(SocketAddr::ip);
+
+        client_ip.hash(&mut hasher);
 
         hasher.finish()
+    }
+
+    fn log_request(&self, buffer: &mut Buffer, description: &str, outcome: ProxyOutcome) {
+        if let Err(e) = self.try_log_request(buffer, description, outcome) {
+            eprintln!("Failed to log request: {}", e);
+        }
+    }
+
+    fn try_log_request(
+        &self,
+        buffer: &mut Buffer,
+        description: &str,
+        outcome: ProxyOutcome,
+    ) -> Result<(), std::io::Error> {
+        buffer.reset()?;
+
+        write!(buffer, "{description} ")?;
+
+        buffer.set_color(&outcome.get_colour())?;
+        write!(buffer, "{outcome}")?;
+        buffer.reset()?;
+
+        writeln!(buffer)?;
+
+        self.log_writer.print(buffer)?;
+
+        Ok(())
     }
 }
 
 #[async_trait]
 impl ProxyHttp for FlakyProxy {
-    type CTX = Option<RequestHash>;
+    type CTX = RequestContext;
 
     fn new_ctx(&self) -> Self::CTX {
-        None
-    }
-
-    async fn request_filter(
-        &self,
-        session: &mut Session,
-        ctx: &mut Self::CTX,
-    ) -> pingora::Result<bool> {
-        let request_hash = self.hash_request(session);
-
-        *ctx = Some(request_hash);
-
-        let previous_attempts = *self
-            .request_counters
-            .entry(request_hash)
-            .and_modify(|v| *v = v.saturating_add(1))
-            .or_insert(0);
-
-        if previous_attempts >= 1 {
-            return Ok(false);
+        Self::CTX {
+            hash: None,
+            log_buffer: self.log_writer.buffer(),
         }
-
-        session.respond_error(503).await?;
-
-        Ok(true)
     }
 
     async fn upstream_peer(
@@ -97,6 +149,36 @@ impl ProxyHttp for FlakyProxy {
         Ok(peer)
     }
 
+    async fn request_filter(
+        &self,
+        session: &mut Session,
+        ctx: &mut Self::CTX,
+    ) -> pingora::Result<bool> {
+        let request_hash = self.hash_request(session);
+
+        ctx.hash = Some(request_hash);
+
+        let previous_attempts = *self
+            .request_counters
+            .entry(request_hash)
+            .and_modify(|v| *v = v.saturating_add(1))
+            .or_insert(0);
+
+        if previous_attempts >= 1 {
+            return Ok(false);
+        }
+
+        self.log_request(
+            &mut ctx.log_buffer,
+            &session.request_summary(),
+            ProxyOutcome::RequestDropped,
+        );
+
+        session.respond_error(503).await?;
+
+        Ok(true)
+    }
+
     async fn upstream_request_filter(
         &self,
         _session: &mut Session,
@@ -109,11 +191,11 @@ impl ProxyHttp for FlakyProxy {
 
     async fn response_filter(
         &self,
-        _session: &mut Session,
+        session: &mut Session,
         _upstream_response: &mut ResponseHeader,
         ctx: &mut Self::CTX,
     ) -> pingora::Result<()> {
-        let request_hash = ctx.ok_or_else(|| {
+        let request_hash = ctx.hash.ok_or_else(|| {
             pingora::Error::explain(ErrorType::InternalError, "Missing request hash")
         })?;
 
@@ -124,8 +206,19 @@ impl ProxyHttp for FlakyProxy {
             .or_insert(0);
 
         if previous_attempts >= 1 {
+            self.log_request(
+                &mut ctx.log_buffer,
+                &session.request_summary(),
+                ProxyOutcome::Forwarded,
+            );
             Ok(())
         } else {
+            self.log_request(
+                &mut ctx.log_buffer,
+                &session.request_summary(),
+                ProxyOutcome::ResponseDropped,
+            );
+
             Err(pingora::Error::explain(
                 ErrorType::HTTPStatus(503),
                 "Response blocked",

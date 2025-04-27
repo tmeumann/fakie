@@ -5,6 +5,7 @@ use hickory_resolver::Resolver;
 use pingora::lb::discovery::ServiceDiscovery;
 use pingora::lb::{Backend, Extensions};
 use pingora::protocols::l4::socket::SocketAddr::Inet;
+use pingora::ErrorType;
 use std::collections::{BTreeSet, HashMap};
 use std::net::SocketAddr;
 
@@ -29,7 +30,10 @@ impl Dns {
 #[async_trait]
 impl ServiceDiscovery for Dns {
     async fn discover(&self) -> pingora::Result<(BTreeSet<Backend>, HashMap<u64, bool>)> {
-        let hosts = self.resolver.lookup_ip(&self.domain).await.unwrap();
+        let hosts =
+            self.resolver.lookup_ip(&self.domain).await.map_err(|err| {
+                pingora::Error::because(ErrorType::ConnectError, "DNS failure", err)
+            })?;
 
         let backends = BTreeSet::from_iter(hosts.iter().map(|ip| Backend {
             // TODO conditional TLS
