@@ -58,6 +58,7 @@ pub struct FlakyProxy {
     request_filters: Vec<Box<dyn Filter + Send + Sync>>,
     response_filters: Vec<Box<dyn Filter + Send + Sync>>,
     log_writer: BufferWriter,
+    tls: bool,
 }
 
 impl FlakyProxy {
@@ -67,6 +68,7 @@ impl FlakyProxy {
         request_filters: Vec<Box<dyn Filter + Send + Sync>>,
         response_filters: Vec<Box<dyn Filter + Send + Sync>>,
         log_writer: BufferWriter,
+        tls: bool,
     ) -> Self {
         Self {
             sni,
@@ -75,6 +77,7 @@ impl FlakyProxy {
             request_filters,
             response_filters,
             log_writer,
+            tls,
         }
     }
 
@@ -145,8 +148,7 @@ impl ProxyHttp for FlakyProxy {
             .select(b"", 256)
             .ok_or_else(|| pingora::Error::explain(ErrorType::ConnectError, "DNS failure"))?;
 
-        // TODO conditional TLS
-        let peer = Box::new(HttpPeer::new(backend.addr, true, self.sni.clone()));
+        let peer = Box::new(HttpPeer::new(backend.addr, self.tls, self.sni.clone()));
 
         Ok(peer)
     }

@@ -8,8 +8,9 @@ async-trait = "0.1"
 clap = { version = "4", features = ["derive"] }
 dashmap = "6"
 hickory-resolver = "0.25"
-pingora = { version = "0.4", features = ["lb", "rustls"] }
+pingora = { version = "0.5", features = ["lb", "rustls"] }
 termcolor = "1"
+url = "2"
 
 [patch.crates-io]
 # TODO temporary fix for https://github.com/cloudflare/pingora/issues/568

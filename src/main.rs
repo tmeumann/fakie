@@ -5,13 +5,14 @@
 
 use crate::counter::CountingFilter;
 use clap::Parser;
-use dns::Dns;
+use dns::DnsCapableDiscovery;
 use pingora::lb::Backends;
 use pingora::listeners::ServerAddress;
 use pingora::prelude::*;
 use proxy::FlakyProxy;
 use std::io::IsTerminal;
 use termcolor::{BufferWriter, ColorChoice};
+use url::Url;
 
 mod counter;
 mod dns;
@@ -46,10 +47,24 @@ fn main() -> Result<()> {
         target,
     } = Args::parse();
 
+    let target_url = if let Ok(url) = Url::parse(&target) {
+        url
+    } else {
+        Url::parse(&format!("http://{target}")).map_err(|_| Error::new(Custom("Invalid target")))?
+    };
+
+    let tls = target_url.scheme() != "http";
+
+    let host = target_url
+        .host_str()
+        .ok_or_else(|| Error::new(Custom("Target must have a host")))?;
+
+    let port = target_url.port().unwrap_or(if tls { 443 } else { 80 });
+
     let mut server = Server::new(None)?;
     server.bootstrap();
 
-    let backends = Backends::new(Box::new(Dns::new(target.clone())));
+    let backends = Backends::new(Box::new(DnsCapableDiscovery::new(host.to_string(), port)));
 
     let load_balancer = LoadBalancer::from_backends(backends);
 
@@ -64,11 +79,12 @@ fn main() -> Result<()> {
     let log_writer = BufferWriter::stdout(colour_choice);
 
     let proxy = FlakyProxy::new(
-        target,
+        host.to_string(),
         background.task(),
         vec![Box::new(CountingFilter::new(queries))],
         vec![Box::new(CountingFilter::new(responses))],
         log_writer,
+        tls,
     );
 
     let mut proxy_service = http_proxy_service(&server.configuration, proxy);
