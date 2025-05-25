@@ -8,7 +8,6 @@ The flaky network proxy.
 - [x] configurable listen address
 - [x] logging/stdout
 - [x] counter reset
-- [ ] graceful shutdown
 - [ ] read hostname from CLI
 - [ ] read IP address from CLI
 - [ ] read TLS/no TLS from CLI
