@@ -41,8 +41,8 @@ fn main() -> Result<()> {
     let Args {
         tls: _, // TODO
         listen,
-        queries: _,   // TODO
-        responses: _, // TODO
+        queries,
+        responses,
         target,
     } = Args::parse();
 
@@ -66,8 +66,8 @@ fn main() -> Result<()> {
     let proxy = FlakyProxy::new(
         target,
         background.task(),
-        vec![Box::new(CountingFilter::new(1))],
-        vec![Box::new(CountingFilter::new(1))],
+        vec![Box::new(CountingFilter::new(queries))],
+        vec![Box::new(CountingFilter::new(responses))],
         log_writer,
     );
 

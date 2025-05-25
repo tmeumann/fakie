@@ -51,11 +51,6 @@ pub struct RequestContext {
     log_buffer: Buffer,
 }
 
-struct FilterTracker {
-    enabled: bool,
-    filter: Box<dyn Filter + Send + Sync>,
-}
-
 pub struct FlakyProxy {
     sni: String,
     load_balancer: Arc<LoadBalancer<RoundRobin>>,

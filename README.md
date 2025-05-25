@@ -8,10 +8,10 @@ The flaky network proxy.
 - [x] configurable listen address
 - [x] logging/stdout
 - [x] counter reset
-- [ ] read hostname from CLI
+- [x] read hostname from CLI
 - [ ] read IP address from CLI
 - [ ] read TLS/no TLS from CLI
-- [ ] configurable drop rate
+- [x] configurable drop rate
 - [ ] chaos monkey mode (random drops)
 - [ ] execute sub-process and detect open port?
 - [ ] windows
