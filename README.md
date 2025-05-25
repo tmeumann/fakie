@@ -13,7 +13,8 @@ The flaky network proxy.
 - [x] read TLS/no TLS from CLI
 - [x] configurable drop rate
 - [ ] chaos monkey mode (random drops)
-- [ ] execute sub-process and detect open port?
+- [ ] CI/CD
 - [ ] windows
+- [ ] execute sub-process and detect open port?
 - [ ] time-based filter?
 - [ ] path re-writes
