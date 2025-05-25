@@ -7,7 +7,7 @@ The flaky network proxy.
 - [x] drop first request attempt
 - [x] configurable listen address
 - [x] logging/stdout
-- [ ] counter reset
+- [x] counter reset
 - [ ] graceful shutdown
 - [ ] read hostname from CLI
 - [ ] read IP address from CLI
@@ -16,3 +16,4 @@ The flaky network proxy.
 - [ ] chaos monkey mode (random drops)
 - [ ] execute sub-process and detect open port?
 - [ ] windows
+- [ ] time-based filter?

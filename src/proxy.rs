@@ -1,5 +1,5 @@
+use crate::filter::Filter;
 use async_trait::async_trait;
-use dashmap::DashMap;
 use pingora::http::{RequestHeader, ResponseHeader};
 use pingora::lb::LoadBalancer;
 use pingora::prelude::{HttpPeer, ProxyHttp, RoundRobin, Session};
@@ -51,12 +51,17 @@ pub struct RequestContext {
     log_buffer: Buffer,
 }
 
+struct FilterTracker {
+    enabled: bool,
+    filter: Box<dyn Filter + Send + Sync>,
+}
+
 pub struct FlakyProxy {
     sni: String,
     load_balancer: Arc<LoadBalancer<RoundRobin>>,
     hash_state: RandomState,
-    request_counters: DashMap<RequestHash, u64>,
-    response_counters: DashMap<RequestHash, u64>,
+    request_filters: Vec<Box<dyn Filter + Send + Sync>>,
+    response_filters: Vec<Box<dyn Filter + Send + Sync>>,
     log_writer: BufferWriter,
 }
 
@@ -64,14 +69,16 @@ impl FlakyProxy {
     pub fn new(
         sni: String,
         load_balancer: Arc<LoadBalancer<RoundRobin>>,
+        request_filters: Vec<Box<dyn Filter + Send + Sync>>,
+        response_filters: Vec<Box<dyn Filter + Send + Sync>>,
         log_writer: BufferWriter,
     ) -> Self {
         Self {
             sni,
             load_balancer,
             hash_state: RandomState::new(),
-            request_counters: DashMap::new(),
-            response_counters: DashMap::new(),
+            request_filters,
+            response_filters,
             log_writer,
         }
     }
@@ -158,25 +165,21 @@ impl ProxyHttp for FlakyProxy {
 
         ctx.hash = Some(request_hash);
 
-        let previous_attempts = *self
-            .request_counters
-            .entry(request_hash)
-            .and_modify(|v| *v = v.saturating_add(1))
-            .or_insert(0);
+        for f in &self.request_filters {
+            if !f.filter(request_hash) {
+                self.log_request(
+                    &mut ctx.log_buffer,
+                    &session.request_summary(),
+                    ProxyOutcome::RequestDropped,
+                );
 
-        if previous_attempts >= 1 {
-            return Ok(false);
+                session.respond_error(503).await?;
+
+                return Ok(true);
+            }
         }
 
-        self.log_request(
-            &mut ctx.log_buffer,
-            &session.request_summary(),
-            ProxyOutcome::RequestDropped,
-        );
-
-        session.respond_error(503).await?;
-
-        Ok(true)
+        Ok(false)
     }
 
     async fn upstream_request_filter(
@@ -199,30 +202,35 @@ impl ProxyHttp for FlakyProxy {
             pingora::Error::explain(ErrorType::InternalError, "Missing request hash")
         })?;
 
-        let previous_attempts = *self
-            .response_counters
-            .entry(request_hash)
-            .and_modify(|v| *v = v.saturating_add(1))
-            .or_insert(0);
+        for f in &self.response_filters {
+            if !f.filter(request_hash) {
+                self.log_request(
+                    &mut ctx.log_buffer,
+                    &session.request_summary(),
+                    ProxyOutcome::ResponseDropped,
+                );
 
-        if previous_attempts >= 1 {
-            self.log_request(
-                &mut ctx.log_buffer,
-                &session.request_summary(),
-                ProxyOutcome::Forwarded,
-            );
-            Ok(())
-        } else {
-            self.log_request(
-                &mut ctx.log_buffer,
-                &session.request_summary(),
-                ProxyOutcome::ResponseDropped,
-            );
-
-            Err(pingora::Error::explain(
-                ErrorType::HTTPStatus(503),
-                "Response blocked",
-            ))
+                return Err(pingora::Error::explain(
+                    ErrorType::HTTPStatus(502),
+                    "Response blocked",
+                ));
+            }
         }
+
+        self.log_request(
+            &mut ctx.log_buffer,
+            &session.request_summary(),
+            ProxyOutcome::Forwarded,
+        );
+
+        for f in &self.request_filters {
+            f.reset(request_hash);
+        }
+
+        for f in &self.response_filters {
+            f.reset(request_hash);
+        }
+
+        Ok(())
     }
 }

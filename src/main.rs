@@ -3,6 +3,7 @@
 #![warn(clippy::panic)]
 #![warn(unsafe_code)]
 
+use crate::counter::CountingFilter;
 use clap::Parser;
 use dns::Dns;
 use pingora::lb::Backends;
@@ -12,7 +13,9 @@ use proxy::FlakyProxy;
 use std::io::IsTerminal;
 use termcolor::{BufferWriter, ColorChoice};
 
+mod counter;
 mod dns;
+mod filter;
 mod proxy;
 
 /// An HTTP proxy that intentionally drops requests and/or responses
@@ -60,7 +63,13 @@ fn main() -> Result<()> {
 
     let log_writer = BufferWriter::stdout(colour_choice);
 
-    let proxy = FlakyProxy::new(target, background.task(), log_writer);
+    let proxy = FlakyProxy::new(
+        target,
+        background.task(),
+        vec![Box::new(CountingFilter::new(1))],
+        vec![Box::new(CountingFilter::new(1))],
+        log_writer,
+    );
 
     let mut proxy_service = http_proxy_service(&server.configuration, proxy);
 
