@@ -2,6 +2,17 @@
 name = "fakie"
 version = "0.1.0"
 edition = "2024"
+license-file = "LICENSE"
+description = "The flaky http proxy."
+homepage = "https://github.com/tmeumann/fakie"
+repository = "https://github.com/tmeumann/fakie"
+readme = "README.md"
+keywords = ["http", "proxy", "flaky", "testing"]
+categories = [
+    "development-tools::testing",
+    "command-line-utilities",
+    "web-programming",
+]
 
 [dependencies]
 async-trait = "0.1"

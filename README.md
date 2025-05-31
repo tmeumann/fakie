@@ -1,6 +1,6 @@
 # fakie
 
-The flaky network proxy.
+The flaky http proxy.
 
 ## TODO
 
