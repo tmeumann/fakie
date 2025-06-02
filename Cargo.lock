@@ -735,6 +735,7 @@ dependencies = [
  "dashmap",
  "hickory-resolver",
  "pingora",
+ "rand 0.9.1",
  "termcolor",
  "url",
 ]

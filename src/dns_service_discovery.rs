@@ -10,13 +10,13 @@ use std::iter;
 use std::net::{IpAddr, SocketAddr};
 use std::str::FromStr;
 
-pub struct DnsCapableDiscovery {
+pub struct DnsServiceDiscovery {
     host: String,
     port: u16,
     resolver: Resolver<TokioConnectionProvider>,
 }
 
-impl DnsCapableDiscovery {
+impl DnsServiceDiscovery {
     pub fn new(host: String, port: u16) -> Self {
         Self {
             host,
@@ -39,7 +39,7 @@ impl DnsCapableDiscovery {
 }
 
 #[async_trait]
-impl ServiceDiscovery for DnsCapableDiscovery {
+impl ServiceDiscovery for DnsServiceDiscovery {
     async fn discover(&self) -> pingora::Result<(BTreeSet<Backend>, HashMap<u64, bool>)> {
         let backends = if let Ok(ip_addr) = IpAddr::from_str(&self.host) {
             self.build_tree(iter::once(ip_addr))

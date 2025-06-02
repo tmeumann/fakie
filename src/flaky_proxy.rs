@@ -1,53 +1,21 @@
 use crate::filter::Filter;
+use crate::filter_outcome::FilterOutcome;
 use async_trait::async_trait;
 use pingora::http::{RequestHeader, ResponseHeader};
 use pingora::lb::LoadBalancer;
 use pingora::prelude::{HttpPeer, ProxyHttp, RoundRobin, Session};
 use pingora::protocols::l4::socket::SocketAddr as PingoraSocketAddr;
 use pingora::ErrorType;
-use std::fmt::Display;
 use std::hash::{BuildHasher, Hash, Hasher, RandomState};
 use std::io::Write;
 use std::net::SocketAddr;
 use std::sync::Arc;
-use termcolor::{Buffer, BufferWriter, Color, ColorSpec, WriteColor};
+use termcolor::{Buffer, BufferWriter, WriteColor};
 
 type RequestHash = u64;
 
-pub enum ProxyOutcome {
-    RequestDropped,
-    ResponseDropped,
-    Forwarded,
-}
-
-impl ProxyOutcome {
-    pub fn get_colour(&self) -> ColorSpec {
-        let mut colour_spec = ColorSpec::new();
-
-        let foreground = match self {
-            ProxyOutcome::RequestDropped => Color::Red,
-            ProxyOutcome::ResponseDropped => Color::Yellow,
-            ProxyOutcome::Forwarded => Color::Green,
-        };
-
-        colour_spec.set_fg(Some(foreground));
-
-        colour_spec
-    }
-}
-
-impl Display for ProxyOutcome {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            ProxyOutcome::RequestDropped => write!(f, "REQUEST DROPPED"),
-            ProxyOutcome::ResponseDropped => write!(f, "RESPONSE DROPPED"),
-            ProxyOutcome::Forwarded => write!(f, "FORWARDED"),
-        }
-    }
-}
-
 pub struct RequestContext {
-    hash: Option<RequestHash>,
+    outcome: FilterOutcome,
     log_buffer: Buffer,
 }
 
@@ -55,8 +23,7 @@ pub struct FlakyProxy {
     sni: String,
     load_balancer: Arc<LoadBalancer<RoundRobin>>,
     hash_state: RandomState,
-    request_filters: Vec<Box<dyn Filter + Send + Sync>>,
-    response_filters: Vec<Box<dyn Filter + Send + Sync>>,
+    filters: Vec<Box<dyn Filter + Send + Sync>>,
     log_writer: BufferWriter,
     tls: bool,
 }
@@ -65,8 +32,7 @@ impl FlakyProxy {
     pub fn new(
         sni: String,
         load_balancer: Arc<LoadBalancer<RoundRobin>>,
-        request_filters: Vec<Box<dyn Filter + Send + Sync>>,
-        response_filters: Vec<Box<dyn Filter + Send + Sync>>,
+        filters: Vec<Box<dyn Filter + Send + Sync>>,
         log_writer: BufferWriter,
         tls: bool,
     ) -> Self {
@@ -74,8 +40,7 @@ impl FlakyProxy {
             sni,
             load_balancer,
             hash_state: RandomState::new(),
-            request_filters,
-            response_filters,
+            filters,
             log_writer,
             tls,
         }
@@ -99,7 +64,7 @@ impl FlakyProxy {
         hasher.finish()
     }
 
-    fn log_request(&self, buffer: &mut Buffer, description: &str, outcome: ProxyOutcome) {
+    fn log_request(&self, buffer: &mut Buffer, description: &str, outcome: FilterOutcome) {
         if let Err(e) = self.try_log_request(buffer, description, outcome) {
             eprintln!("Failed to log request: {}", e);
         }
@@ -109,7 +74,7 @@ impl FlakyProxy {
         &self,
         buffer: &mut Buffer,
         description: &str,
-        outcome: ProxyOutcome,
+        outcome: FilterOutcome,
     ) -> Result<(), std::io::Error> {
         buffer.reset()?;
 
@@ -125,6 +90,12 @@ impl FlakyProxy {
 
         Ok(())
     }
+
+    fn reset_filters(&self, request_hash: RequestHash) {
+        for f in &self.filters {
+            f.reset(request_hash);
+        }
+    }
 }
 
 #[async_trait]
@@ -133,7 +104,7 @@ impl ProxyHttp for FlakyProxy {
 
     fn new_ctx(&self) -> Self::CTX {
         Self::CTX {
-            hash: None,
+            outcome: FilterOutcome::Passed,
             log_buffer: self.log_writer.buffer(),
         }
     }
@@ -160,23 +131,29 @@ impl ProxyHttp for FlakyProxy {
     ) -> pingora::Result<bool> {
         let request_hash = self.hash_request(session);
 
-        ctx.hash = Some(request_hash);
+        for f in &self.filters {
+            ctx.outcome = f.filter(request_hash);
 
-        for f in &self.request_filters {
-            if !f.filter(request_hash) {
-                self.log_request(
-                    &mut ctx.log_buffer,
-                    &session.request_summary(),
-                    ProxyOutcome::RequestDropped,
-                );
-
-                session.respond_error(503).await?;
-
-                return Ok(true);
+            if ctx.outcome != FilterOutcome::Passed {
+                break;
             }
         }
 
-        Ok(false)
+        self.log_request(&mut ctx.log_buffer, &session.request_summary(), ctx.outcome);
+
+        let response_sent = match ctx.outcome {
+            FilterOutcome::Passed => {
+                self.reset_filters(request_hash);
+                false
+            }
+            FilterOutcome::RequestDenied => {
+                session.respond_error(503).await?;
+                true
+            }
+            FilterOutcome::ResponseDenied => false,
+        };
+
+        Ok(response_sent)
     }
 
     async fn upstream_request_filter(
@@ -191,43 +168,17 @@ impl ProxyHttp for FlakyProxy {
 
     async fn response_filter(
         &self,
-        session: &mut Session,
+        _session: &mut Session,
         _upstream_response: &mut ResponseHeader,
         ctx: &mut Self::CTX,
     ) -> pingora::Result<()> {
-        let request_hash = ctx.hash.ok_or_else(|| {
-            pingora::Error::explain(ErrorType::InternalError, "Missing request hash")
-        })?;
-
-        for f in &self.response_filters {
-            if !f.filter(request_hash) {
-                self.log_request(
-                    &mut ctx.log_buffer,
-                    &session.request_summary(),
-                    ProxyOutcome::ResponseDropped,
-                );
-
-                return Err(pingora::Error::explain(
-                    ErrorType::HTTPStatus(502),
-                    "Response blocked",
-                ));
-            }
+        if ctx.outcome == FilterOutcome::ResponseDenied {
+            Err(pingora::Error::explain(
+                ErrorType::HTTPStatus(502),
+                "Response blocked",
+            ))
+        } else {
+            Ok(())
         }
-
-        self.log_request(
-            &mut ctx.log_buffer,
-            &session.request_summary(),
-            ProxyOutcome::Forwarded,
-        );
-
-        for f in &self.request_filters {
-            f.reset(request_hash);
-        }
-
-        for f in &self.response_filters {
-            f.reset(request_hash);
-        }
-
-        Ok(())
     }
 }
