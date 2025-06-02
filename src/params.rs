@@ -45,19 +45,19 @@ impl Params {
 
         let FakieArgs {
             listen: listen_addr,
-            sends: requests,
+            sends,
             responses,
             chaos,
             target_server: target,
         } = FakieArgs::from_arg_matches(&argument_matches)
             .map_err(|_| pingora::Error::new(Custom("Invalid arguments")))?;
 
-        let requests_index = argument_matches.index_of("requests");
+        let sends_index = argument_matches.index_of("sends");
         let responses_index = argument_matches.index_of("responses");
         let chaos_index = argument_matches.index_of("chaos");
 
         let mut indexed_filters = [
-            (requests_index, Self::request_count_filter(requests)),
+            (sends_index, Self::request_count_filter(sends)),
             (responses_index, Self::response_count_filter(responses)),
             (chaos_index, Self::chaos_filter(chaos)?),
         ];
