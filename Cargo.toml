@@ -1,6 +1,6 @@
 [package]
 name = "fakie"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2024"
 license-file = "LICENSE"
 description = "The flaky web proxy."
@@ -19,7 +19,7 @@ async-trait = "0.1"
 clap = { version = "4", features = ["derive"] }
 dashmap = "6"
 hickory-resolver = "0.25"
-pingora = { version = "0.5", features = ["lb", "rustls"] }
+pingora = { version = "0.6", features = ["lb", "rustls"] }
 rand = "0.9"
 termcolor = "1"
 url = "2"
