@@ -3,7 +3,7 @@ use crate::filter_outcome::FilterOutcome;
 use pingora::{Custom, Error, Result};
 use rand::distr::Bernoulli;
 use rand::prelude::Distribution;
-use rand::{rng, Rng};
+use rand::{rng, RngExt};
 
 pub struct ChaosFilter {
     drop_distribution: Bernoulli,
