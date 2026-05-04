@@ -3,11 +3,11 @@ use crate::flaky_proxy::FlakyProxy;
 use crate::params::Params;
 use pingora::lb::{Backends, LoadBalancer};
 use pingora::listeners::ServerAddress;
-use pingora::prelude::{background_service, http_proxy_service, Server};
+use pingora::prelude::{Server, background_service, http_proxy_service};
 use std::io::IsTerminal;
 use termcolor::{BufferWriter, ColorChoice};
 
-pub fn run_server(params: Params) -> pingora::Result<()> {
+pub fn run_server(params: Params) -> anyhow::Result<()> {
     let Params {
         listen_addr,
         upstream_host,
@@ -23,7 +23,7 @@ pub fn run_server(params: Params) -> pingora::Result<()> {
         LoadBalancer::from_backends(Backends::new(Box::new(DnsServiceDiscovery::new(
             upstream_host.clone(),
             upstream_port,
-        )))),
+        )?))),
     );
 
     let colour_choice = if std::io::stdin().is_terminal() {

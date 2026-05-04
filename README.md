@@ -3,7 +3,7 @@
 An HTTP proxy for testing web apps under flaky network conditions. Can be configured to drop:
 
 - the first _n_ attempts to send each request;
-- the first _n_ attempted responses from each request; and/or
+- the first _n_ server responses from each request; and/or
 - a percentage of requests and/or responses at random.
 
 No automated tests were used, but also no vibes. Use at your own risk.

@@ -15,7 +15,8 @@ mod flaky_proxy;
 mod params;
 mod server;
 
-fn main() -> pingora::Result<()> {
+fn main() -> anyhow::Result<()> {
     let proxy_params = Params::parse_cli_args()?;
-    run_server(proxy_params)
+    run_server(proxy_params)?;
+    Ok(())
 }

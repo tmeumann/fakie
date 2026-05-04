@@ -1,7 +1,5 @@
 use async_trait::async_trait;
-use hickory_resolver::config::ResolverConfig;
-use hickory_resolver::name_server::TokioConnectionProvider;
-use hickory_resolver::Resolver;
+use hickory_resolver::TokioResolver;
 use pingora::lb::discovery::ServiceDiscovery;
 use pingora::lb::{Backend, Extensions};
 use pingora::protocols::l4::socket::SocketAddr::Inet;
@@ -13,20 +11,16 @@ use std::str::FromStr;
 pub struct DnsServiceDiscovery {
     host: String,
     port: u16,
-    resolver: Resolver<TokioConnectionProvider>,
+    resolver: TokioResolver,
 }
 
 impl DnsServiceDiscovery {
-    pub fn new(host: String, port: u16) -> Self {
-        Self {
+    pub fn new(host: String, port: u16) -> anyhow::Result<Self> {
+        Ok(Self {
             host,
             port,
-            resolver: Resolver::builder_with_config(
-                ResolverConfig::default(),
-                TokioConnectionProvider::default(),
-            )
-            .build(),
-        }
+            resolver: TokioResolver::builder_tokio()?.build()?,
+        })
     }
 
     fn build_tree(&self, ip_addrs: impl Iterator<Item = IpAddr>) -> BTreeSet<Backend> {

@@ -38,7 +38,7 @@ pub struct Params {
 }
 
 impl Params {
-    pub fn parse_cli_args() -> pingora::Result<Self> {
+    pub fn parse_cli_args() -> anyhow::Result<Self> {
         let cli = FakieArgs::augment_args(Command::new("fakie"));
 
         let argument_matches = cli.get_matches();
@@ -101,7 +101,7 @@ impl Params {
         n.map(|n| Box::new(CountingFilter::new(n, FilterOutcome::ResponseDenied)) as BoxedFilter)
     }
 
-    fn chaos_filter(percentage: Option<f64>) -> pingora::Result<Option<BoxedFilter>> {
+    fn chaos_filter(percentage: Option<f64>) -> anyhow::Result<Option<BoxedFilter>> {
         if let Some(p) = percentage {
             let filter = ChaosFilter::new(p / 100.0)
                 .map_err(|_| pingora::Error::new(Custom("Invalid chaos percentage")))?;
